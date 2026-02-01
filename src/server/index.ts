@@ -126,7 +126,7 @@ router.post("/api/state", async (req, res) => {
       username,
       updatedAt: Date.now(),
       ...(typeof level === "number" ? { level } : (prev.level !== undefined ? { level: prev.level } : {})),
-      ...(data !== undefined           ? { data }  : (prev.data  !== undefined ? { data: prev.data } : {})),
+      ...(data !== undefined ? { data } : (prev.data !== undefined ? { data: prev.data } : {})),
       ...(prev.bestScore !== undefined ? { bestScore: prev.bestScore } : {}),
     };
 
@@ -174,7 +174,7 @@ router.post("/api/score", async (req, res) => {
       username,
       updatedAt: Date.now(),
       ...(prev.level !== undefined ? { level: prev.level } : {}),
-      ...(prev.data  !== undefined ? { data: prev.data } : {}),
+      ...(prev.data !== undefined ? { data: prev.data } : {}),
       bestScore: best,
     };
 
@@ -222,10 +222,10 @@ router.get("/api/leaderboard", async (req, res) => {
     const me =
       meRank0 !== undefined && meRank0 !== null
         ? {
-            rank: Number(meRank0) + 1,
-            username,
-            score: Number((await redis.zScore(lbKey, username)) ?? 0),
-          }
+          rank: Number(meRank0) + 1,
+          username,
+          score: Number((await redis.zScore(lbKey, username)) ?? 0),
+        }
         : null;
 
     res.json({
