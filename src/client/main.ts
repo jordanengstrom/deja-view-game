@@ -140,9 +140,8 @@ class GameLoader {
 
   private setupResizeObserver() {
     window.onGameSetWindowSize = (width: number, height: number) => {
-      console.log(`Window size set to width: ${width}, height: ${height}`);
-      this.startingHeight = height;
-      this.startingWidth = width;
+      this.startingHeight = 584;
+      this.startingWidth = 375;
       this.startingAspect = this.startingWidth / this.startingHeight;
     };
 
@@ -158,29 +157,31 @@ class GameLoader {
   }
 
   private ensureAspectRatio() {
-    if (!this.canvasElement || !this.startingHeight || !this.startingWidth) {
+    if (!this.canvasElement || !this.startingHeight || !this.startingWidth || !this.startingAspect) {
       return;
     }
 
     this.canvasElement.classList.add("active");
-    
-    const maxWidth = window.innerWidth;
-    const maxHeight = window.innerHeight;
-    let newHeight: number, newWidth: number;
 
-    const heightQuotient = this.startingHeight / maxHeight;
-    const widthQuotient = this.startingWidth / maxWidth;
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    const windowAspect = windowWidth / windowHeight;
 
-    if (heightQuotient > widthQuotient) {
-      newHeight = maxHeight;
-      newWidth = newHeight * this.startingAspect!;
+    let newWidth: number;
+    let newHeight: number;
+
+    if (windowAspect > this.startingAspect) {
+      // Window is wider than the game, so height is the limiting factor
+      newHeight = windowHeight;
+      newWidth = newHeight * this.startingAspect;
     } else {
-      newWidth = maxWidth;
-      newHeight = newWidth / this.startingAspect!;
+      // Window is taller than the game, so width is the limiting factor
+      newWidth = windowWidth;
+      newHeight = newWidth / this.startingAspect;
     }
 
-    this.canvasElement.style.height = "100%" //`${newHeight}px`;
-    this.canvasElement.style.width = "100%" //`${newWidth}px`;
+    this.canvasElement.style.width = `${newWidth}px`;
+    this.canvasElement.style.height = `${newHeight}px`;
   }
 
   private async loadRunnerManifest(): Promise<void> {
