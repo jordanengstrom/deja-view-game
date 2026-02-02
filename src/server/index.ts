@@ -71,12 +71,18 @@ type StoredState = {
   updatedAt: number;
 };
 
+function getTodayString(): string {
+  return new Date().toISOString().split('T')[0] as string;
+}
+
 function stateKey(postId: string, username: string) {
   return `state:${postId}:${username}`;
 }
 function leaderboardKey(postId: string) {
-  return `lb:${postId}`;
+  const dateStr = getTodayString();
+  return `lb:${postId}:${dateStr}`;
 }
+
 async function getUsername(): Promise<string> {
   const u = await reddit.getCurrentUsername();
   return u ?? "anonymous";
