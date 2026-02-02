@@ -14,3 +14,18 @@ export type InitResponse = {
 // export type LeaderboardResponse = {
 //   entries: Array<{ username: string; score: number; rank: number }>;
 // };
+
+// Simplified Request: No round ID needed
+export type SubmitScoreRequest = {
+  type: "submit-score";
+  score: number;
+};
+
+// Simplified Response: Returns the rank immediately
+export type SubmitScoreResponse = {
+  success: boolean;
+  score: number;       // The user's best score (might be higher than the one just submitted)
+  rank: number;        // Current rank on the simplified leaderboard
+  totalPlayers: number; 
+  isNewBest: boolean;  // Did they beat their previous score?
+};

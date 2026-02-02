@@ -142,45 +142,66 @@ router.post("/api/state", async (req, res) => {
 router.post("/api/score", async (req, res) => {
   try {
     const { postId } = context;
-    if (!postId) return res.status(400).json({ error: "Missing postId in context" });
+    if (!postId) return res.status(400).json({ error: "Missing postId" });
 
     const username = await getUsername();
     if (username === "anonymous") return res.status(401).json({ error: "Login required" });
 
+    // Use our new simplified structure
     const { score } = req.body ?? {};
+    
     if (typeof score !== "number" || !Number.isFinite(score)) {
-      return res.status(400).json({ error: "score must be a finite number" });
+      return res.status(400).json({ error: "Invalid score" });
     }
 
-    // simple clamp, avoids abuse with huge numbers
     const sanitized = Math.max(0, Math.min(score, 1_000_000_000));
     const lbKey = leaderboardKey(postId);
 
-    // read old score (if any) and keep the max
+    // 1. Get old score to compare
     const existing = await redis.zScore(lbKey, username);
-    const best = existing !== undefined && existing !== null
-      ? Math.max(Number(existing), sanitized)
-      : sanitized;
+    const existingScore = existing !== undefined && existing !== null ? Number(existing) : -1;
+    
+    // 2. Determine best score
+    const best = Math.max(existingScore, sanitized);
+    const isNewBest = sanitized > existingScore;
 
-    // zAdd here updates the sorted set; score used for ranking, member is the username
+    // 3. Update Leaderboard
     await redis.zAdd(lbKey, { score: best, member: username });
 
-    // also mirror this best score into the per-user state
+    // 4. Update User State (optional, keeps your persistence logic)
     const sKey = stateKey(postId, username);
     const prevRaw = await redis.get(sKey);
-    const prev = (prevRaw ? JSON.parse(prevRaw) : {}) as Partial<StoredState>;
-
-    const next: StoredState = {
+    const prev = (prevRaw ? JSON.parse(prevRaw) : {}) as any;
+    const next = {
       username,
       updatedAt: Date.now(),
-      ...(prev.level !== undefined ? { level: prev.level } : {}),
-      ...(prev.data !== undefined ? { data: prev.data } : {}),
+      ...prev,
       bestScore: best,
     };
-
     await redis.set(sKey, JSON.stringify(next));
 
-    res.json({ username, score: best, updatedAt: next.updatedAt });
+    // 5. Calculate Rank immediately
+    // zRank is 0-based ascending (0 is lowest score). 
+    // We want 1-based descending (1 is highest score).
+    const ascRank = await redis.zRank(lbKey, username);
+    const totalPlayers = await redis.zCard(lbKey);
+    
+    let rank = 0;
+    if (ascRank !== undefined && ascRank !== null) {
+      // Invert the rank
+      rank = totalPlayers - Number(ascRank);
+    }
+
+    // 6. Return everything GameMaker needs in one go
+    res.json({ 
+      success: true,
+      score: best, 
+      rank, 
+      totalPlayers,
+      isNewBest,
+      updatedAt: next.updatedAt 
+    });
+
   } catch (err) {
     console.error("POST /api/score error:", err);
     res.status(500).json({ error: "Failed to submit score" });
