@@ -27,7 +27,6 @@ npm-debug.log*
 # package-lock.json
 
 src/client/public/game.unx
-src/client/public/game.unx
 src/client/public/runner.data
 src/client/public/runner.html
 src/client/public/runner.js
