@@ -1,4 +1,4 @@
-import { navigateTo, context, requestExpandedMode } from "@devvit/web/client";
+import { context, requestExpandedMode } from "@devvit/web/client";
 
 const startButton = document.getElementById(
   "start-button"
@@ -8,10 +8,12 @@ startButton.addEventListener("click", (e) => {
   requestExpandedMode(e, "game");
 });
 
-const titleElement = document.getElementById("title") as HTMLHeadingElement;
+const greetingElement = document.getElementById("greeting") as HTMLParagraphElement;
 
 function init() {
-  titleElement.textContent = `Hey ${context.username ?? "user"} 👋`;
+  if (greetingElement) {
+    greetingElement.textContent = `Hello, ${context.username ?? "player"}!`;
+  }
 }
 
 init();
