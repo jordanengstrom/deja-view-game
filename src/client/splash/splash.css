@@ -7,7 +7,8 @@
 }
 
 body {
-  background-color: #0f172a;
+  /* background-color: #0f172a; */
+  background-color: #102865;
   overflow: hidden;
 }
 
@@ -70,7 +71,7 @@ body {
 .game-title {
   font-size: 3em;
   font-weight: 800;
-  color: #f59e0b;
+  color: #EB9D02;
   margin-bottom: 8px;
   letter-spacing: -1px;
 }
@@ -92,7 +93,7 @@ body {
 }
 
 .start-button {
-  background-color: #f59e0b;
+  background-color: #EB9D02;
   color: #0f172a;
   border: none;
   padding: 12px 32px;
