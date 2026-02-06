@@ -70,8 +70,16 @@ function getTodayString(): string {
 function stateKey(postId: string, username: string) {
   return `state:${postId}:${username}`;
 }
-function leaderboardKey(postId: string) {
-  const dateStr = getTodayString();
+
+// OLD
+// function leaderboardKey(postId: string) {
+//   const dateStr = getTodayString();
+//   return `lb:${postId}:${dateStr}`;
+// }
+
+// NEW
+function leaderboardKey(postId: string, dateOverride?: string) {
+  const dateStr = dateOverride ?? getTodayString();
   return `lb:${postId}:${dateStr}`;
 }
 
@@ -211,13 +219,28 @@ router.get("/api/leaderboard", async (req, res) => {
     }
 
     const username = await getUsername();
+
+    // 1. Parse Limit
     const limitParam = Number(req.query.limit ?? 10);
     const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 100)) : 10;
 
-    const lbKey = leaderboardKey(postId);
+    // 2. Parse Bucket (The Fix)
+    // GameMaker sends "YYYYMMDD", but Server expects "YYYY-MM-DD"
+    let dateBucket: string | undefined = undefined;
+    
+    if (typeof req.query.bucket === 'string' && req.query.bucket.length === 8) {
+      // Convert "20260206" -> "2026-02-06"
+      const raw = req.query.bucket;
+      dateBucket = `${raw.substring(0,4)}-${raw.substring(4,6)}-${raw.substring(6,8)}`;
+    }
 
+    // 3. Generate Key with the specific date
+    const lbKey = leaderboardKey(postId, dateBucket);
+
+    // ... The rest of the function remains the same ...
+    // (zRange, mapping entries, fetching user rank, etc.)
+    
     // zRange can return with scores when asked; our SDK does ascending by default
-    // so to emulate "top N", either use rev:true (if available) or flip ranks manually
     const entries = await redis.zRange(lbKey, 0, limit - 1);
 
     const top = entries.map((e, i) => ({
@@ -226,12 +249,12 @@ router.get("/api/leaderboard", async (req, res) => {
       score: Number(e.score ?? 0),
     }));
 
-    // find caller's rank: only ascending zRank is guaranteed
+    // find caller's rank
     const ascRank = await redis.zRank(lbKey, username);
     const total = Number((await redis.zCard(lbKey)) ?? 0);
     const meRank0 =
       ascRank !== null && ascRank !== undefined && total
-        ? total - 1 - Number(ascRank) // flip ascending to descending
+        ? total - 1 - Number(ascRank)
         : ascRank;
 
     const me =
@@ -242,13 +265,15 @@ router.get("/api/leaderboard", async (req, res) => {
           score: Number((await redis.zScore(lbKey, username)) ?? 0),
         }
         : null;
-
-    res.json({
+    const responseData = {
       top,
       me,
       totalPlayers: total,
       generatedAt: Date.now(),
-    });
+      bucket: dateBucket ?? "server-today"
+    };
+    // console.log("Sending response:", JSON.stringify(responseData));
+    res.json({responseData});
   } catch (err) {
     console.error("GET /api/leaderboard error:", err);
     res.status(500).json({ error: "Failed to fetch leaderboard" });
