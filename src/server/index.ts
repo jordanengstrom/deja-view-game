@@ -1,5 +1,5 @@
 import express from "express";
-import { InitResponse } from "../shared/types/api";
+import { InitResponse, StoredState } from "../shared/types/api";
 import {
   createServer,
   context,
@@ -62,14 +62,6 @@ router.get<
 // ##########################################################################
 // # DEMO SAMPLE: State + Score + Leaderboard using Redis
 // ##########################################################################
-
-type StoredState = {
-  username: string;
-  level?: number;
-  bestScore?: number;              // <- optional; we mirror leaderboard here
-  data?: Record<string, unknown>;
-  updatedAt: number;
-};
 
 function getTodayString(): string {
   return new Date().toISOString().split('T')[0] as string;
