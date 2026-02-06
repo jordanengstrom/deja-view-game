@@ -71,13 +71,6 @@ function stateKey(postId: string, username: string) {
   return `state:${postId}:${username}`;
 }
 
-// OLD
-// function leaderboardKey(postId: string) {
-//   const dateStr = getTodayString();
-//   return `lb:${postId}:${dateStr}`;
-// }
-
-// NEW
 function leaderboardKey(postId: string, dateOverride?: string) {
   const dateStr = dateOverride ?? getTodayString();
   return `lb:${postId}:${dateStr}`;
