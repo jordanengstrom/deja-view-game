@@ -267,7 +267,6 @@ Add API types in `src/shared/types/api.ts`:
 ```typescript
 export type SaveScoreRequest = {
   score: number;
-  level: number;
 };
 ```
 

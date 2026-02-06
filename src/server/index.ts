@@ -107,10 +107,7 @@ router.post("/api/state", async (req, res) => {
     const username = await getUsername();
     if (username === "anonymous") return res.status(401).json({ error: "Login required" });
 
-    const { level, data } = req.body ?? {};
-    if (level !== undefined && typeof level !== "number") {
-      return res.status(400).json({ error: "level must be a number" });
-    }
+    const { data } = req.body ?? {};
     if (data !== undefined && (typeof data !== "object" || data === null)) {
       return res.status(400).json({ error: "data must be an object" });
     }
@@ -123,7 +120,6 @@ router.post("/api/state", async (req, res) => {
     const next: StoredState = {
       username,
       updatedAt: Date.now(),
-      ...(typeof level === "number" ? { level } : (prev.level !== undefined ? { level: prev.level } : {})),
       ...(data !== undefined ? { data } : (prev.data !== undefined ? { data: prev.data } : {})),
       ...(prev.bestScore !== undefined ? { bestScore: prev.bestScore } : {}),
     };

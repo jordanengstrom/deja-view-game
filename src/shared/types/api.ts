@@ -8,7 +8,6 @@ export type InitResponse = {
 // Examples:
 // export type SaveScoreRequest = {
 //   score: number;
-//   level: number;
 // };
 // 
 // export type LeaderboardResponse = {
