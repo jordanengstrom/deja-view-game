@@ -1,5 +1,5 @@
 import express from "express";
-import { InitResponse, StoredState } from "../shared/types/api";
+import { InitResponse } from "../shared/types/api";
 import {
   createServer,
   context,
@@ -63,17 +63,18 @@ router.get<
 // # DEMO SAMPLE: State + Score + Leaderboard using Redis
 // ##########################################################################
 
-function getTodayString(): string {
-  return new Date().toISOString().split('T')[0] as string;
-}
+type StoredState = {
+  username: string;
+  bestScore?: number;
+  data?: Record<string, unknown>;
+  updatedAt: number;
+};
 
 function stateKey(postId: string, username: string) {
   return `state:${postId}:${username}`;
 }
-
-function leaderboardKey(postId: string, dateOverride?: string) {
-  const dateStr = dateOverride ?? getTodayString();
-  return `lb:${postId}:${dateStr}`;
+function leaderboardKey(postId: string) {
+  return `lb:${postId}`;
 }
 
 async function getUsername(): Promise<string> {
@@ -92,6 +93,8 @@ router.get("/api/state", async (_req, res) => {
     const json = await redis.get(key);
     if (!json) return res.status(404).json({ error: "No state found" });
 
+    let _sstate = JSON.parse(json) as StoredState;
+    console.log("_sstate", JSON.stringify(_sstate));
     res.json(JSON.parse(json) as StoredState);
   } catch (err) {
     console.error("GET /api/state error:", err);
@@ -121,7 +124,7 @@ router.post("/api/state", async (req, res) => {
     const next: StoredState = {
       username,
       updatedAt: Date.now(),
-      ...(data !== undefined ? { data } : (prev.data !== undefined ? { data: prev.data } : {})),
+      ...(data !== undefined           ? { data }  : (prev.data  !== undefined ? { data: prev.data } : {})),
       ...(prev.bestScore !== undefined ? { bestScore: prev.bestScore } : {}),
     };
 
@@ -137,66 +140,44 @@ router.post("/api/state", async (req, res) => {
 router.post("/api/score", async (req, res) => {
   try {
     const { postId } = context;
-    if (!postId) return res.status(400).json({ error: "Missing postId" });
+    if (!postId) return res.status(400).json({ error: "Missing postId in context" });
 
     const username = await getUsername();
     if (username === "anonymous") return res.status(401).json({ error: "Login required" });
 
-    // Use our new simplified structure
     const { score } = req.body ?? {};
-    
     if (typeof score !== "number" || !Number.isFinite(score)) {
-      return res.status(400).json({ error: "Invalid score" });
+      return res.status(400).json({ error: "score must be a finite number" });
     }
 
+    // simple clamp, avoids abuse with huge numbers
     const sanitized = Math.max(0, Math.min(score, 1_000_000_000));
     const lbKey = leaderboardKey(postId);
 
-    // 1. Get old score to compare
+    // read old score (if any) and keep the max
     const existing = await redis.zScore(lbKey, username);
-    const existingScore = existing !== undefined && existing !== null ? Number(existing) : -1;
-    
-    // 2. Determine best score
-    const best = Math.max(existingScore, sanitized);
-    const isNewBest = sanitized > existingScore;
+    const best = existing !== undefined && existing !== null
+      ? Math.max(Number(existing), sanitized)
+      : sanitized;
 
-    // 3. Update Leaderboard
+    // zAdd here updates the sorted set; score used for ranking, member is the username
     await redis.zAdd(lbKey, { score: best, member: username });
 
-    // 4. Update User State (optional, keeps your persistence logic)
+    // also mirror this best score into the per-user state
     const sKey = stateKey(postId, username);
     const prevRaw = await redis.get(sKey);
-    const prev = (prevRaw ? JSON.parse(prevRaw) : {}) as any;
-    const next = {
+    const prev = (prevRaw ? JSON.parse(prevRaw) : {}) as Partial<StoredState>;
+
+    const next: StoredState = {
       username,
       updatedAt: Date.now(),
-      ...prev,
+      ...(prev.data  !== undefined ? { data: prev.data } : {}),
       bestScore: best,
     };
+
     await redis.set(sKey, JSON.stringify(next));
 
-    // 5. Calculate Rank immediately
-    // zRank is 0-based ascending (0 is lowest score). 
-    // We want 1-based descending (1 is highest score).
-    const ascRank = await redis.zRank(lbKey, username);
-    const totalPlayers = await redis.zCard(lbKey);
-    
-    let rank = 0;
-    if (ascRank !== undefined && ascRank !== null) {
-      // Invert the rank
-      rank = totalPlayers - Number(ascRank);
-    }
-
-    // 6. Return everything GameMaker needs in one go
-    res.json({ 
-      success: true,
-      score: best, 
-      rank, 
-      totalPlayers,
-      isNewBest,
-      updatedAt: next.updatedAt 
-    });
-
+    res.json({ username, score: best, updatedAt: next.updatedAt });
   } catch (err) {
     console.error("POST /api/score error:", err);
     res.status(500).json({ error: "Failed to submit score" });
@@ -212,28 +193,13 @@ router.get("/api/leaderboard", async (req, res) => {
     }
 
     const username = await getUsername();
-
-    // 1. Parse Limit
     const limitParam = Number(req.query.limit ?? 10);
     const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 100)) : 10;
 
-    // 2. Parse Bucket (The Fix)
-    // GameMaker sends "YYYYMMDD", but Server expects "YYYY-MM-DD"
-    let dateBucket: string | undefined = undefined;
-    
-    if (typeof req.query.bucket === 'string' && req.query.bucket.length === 8) {
-      // Convert "20260206" -> "2026-02-06"
-      const raw = req.query.bucket;
-      dateBucket = `${raw.substring(0,4)}-${raw.substring(4,6)}-${raw.substring(6,8)}`;
-    }
+    const lbKey = leaderboardKey(postId);
 
-    // 3. Generate Key with the specific date
-    const lbKey = leaderboardKey(postId, dateBucket);
-
-    // ... The rest of the function remains the same ...
-    // (zRange, mapping entries, fetching user rank, etc.)
-    
     // zRange can return with scores when asked; our SDK does ascending by default
+    // so to emulate "top N", either use rev:true (if available) or flip ranks manually
     const entries = await redis.zRange(lbKey, 0, limit - 1);
 
     const top = entries.map((e, i) => ({
@@ -242,31 +208,35 @@ router.get("/api/leaderboard", async (req, res) => {
       score: Number(e.score ?? 0),
     }));
 
-    // find caller's rank
+    // find caller's rank: only ascending zRank is guaranteed
     const ascRank = await redis.zRank(lbKey, username);
     const total = Number((await redis.zCard(lbKey)) ?? 0);
     const meRank0 =
       ascRank !== null && ascRank !== undefined && total
-        ? total - 1 - Number(ascRank)
+        ? total - 1 - Number(ascRank) // flip ascending to descending
         : ascRank;
 
     const me =
       meRank0 !== undefined && meRank0 !== null
         ? {
-          rank: Number(meRank0) + 1,
-          username,
-          score: Number((await redis.zScore(lbKey, username)) ?? 0),
-        }
+            rank: Number(meRank0) + 1,
+            username,
+            score: Number((await redis.zScore(lbKey, username)) ?? 0),
+          }
         : null;
-    const responseData = {
+    let leaderboardData = {
       top,
       me,
       totalPlayers: total,
       generatedAt: Date.now(),
-      bucket: dateBucket ?? "server-today"
-    };
-    // console.log("Sending response:", JSON.stringify(responseData));
-    res.json({responseData});
+    }
+    console.log("Leaderboard data:", JSON.stringify(leaderboardData));
+    res.status(200).json({
+      top,
+      me,
+      totalPlayers: total,
+      generatedAt: Date.now(),
+    });
   } catch (err) {
     console.error("GET /api/leaderboard error:", err);
     res.status(500).json({ error: "Failed to fetch leaderboard" });

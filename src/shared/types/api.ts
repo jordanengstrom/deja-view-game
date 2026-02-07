@@ -28,10 +28,3 @@ export type SubmitScoreResponse = {
   totalPlayers: number; 
   isNewBest: boolean;  // Did they beat their previous score?
 };
-
-export type StoredState = {
-  username: string;
-  bestScore?: number;
-  data?: Record<string, unknown>;
-  updatedAt: number;
-};
