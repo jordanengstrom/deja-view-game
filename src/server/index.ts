@@ -70,7 +70,7 @@ type StoredState = {
   updatedAt: number;
 };
 
-function getUtcDayInteger(offsetDays: number, date: Date = new Date()): string {
+function getUtcDayInteger(offsetDays: number = 0, date: Date = new Date()): string {
   if (offsetDays > 0) {
     date.setUTCDate(date.getUTCDate() + offsetDays);
   }
@@ -86,7 +86,7 @@ function stateKey(postId: string, username: string) {
   return `state:${postId}:${username}`;
 }
 function leaderboardKey(postId: string) {
-  const scoreDate = getUtcDayInteger(0);
+  const scoreDate = getUtcDayInteger();
   return `lb:${postId}:${scoreDate}`;
 }
 
@@ -215,7 +215,7 @@ router.post("/api/score", async (req, res) => {
       totalPlayers,
       isNewBest,
       updatedAt: next.updatedAt,
-      dateBucket: getUtcDayInteger(0), 
+      dateBucket: getUtcDayInteger(),
     };
     console.log("POST /api/score scoreData:", JSON.stringify(scoreData));
     // 6. Return everything GameMaker needs in one go
@@ -226,7 +226,7 @@ router.post("/api/score", async (req, res) => {
       totalPlayers,
       isNewBest,
       updatedAt: next.updatedAt,
-      dateBucket: getUtcDayInteger(0),
+      dateBucket: getUtcDayInteger(),
     });
 
   } catch (err) {
@@ -257,7 +257,7 @@ router.get("/api/leaderboard", async (req, res) => {
       rank: i + 1,
       username: e.member,
       score: Number(e.score ?? 0),
-      dateBucket: getUtcDayInteger(0),
+      dateBucket: getUtcDayInteger(),
     }));
 
     // find caller's rank: only ascending zRank is guaranteed
@@ -274,7 +274,7 @@ router.get("/api/leaderboard", async (req, res) => {
           rank: Number(meRank0) + 1,
           username,
           score: Number((await redis.zScore(lbKey, username)) ?? 0),
-          dateBucket: getUtcDayInteger(0),
+          dateBucket: getUtcDayInteger(),
         }
         : null;
 
@@ -283,7 +283,7 @@ router.get("/api/leaderboard", async (req, res) => {
       me,
       totalPlayers: total,
       generatedAt: Date.now(),
-      dateBucket: getUtcDayInteger(0),
+      dateBucket: getUtcDayInteger(),
     };
     console.log("GET /api/leaderboard dataOut:", JSON.stringify(dataOut));
 
