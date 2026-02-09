@@ -18,6 +18,7 @@ export type InitResponse = {
 export type SubmitScoreRequest = {
   type: "submit-score";
   score: number;
+  dateBucket: number; // Timestamp of when the score was achieved
 };
 
 // Simplified Response: Returns the rank immediately
@@ -27,4 +28,5 @@ export type SubmitScoreResponse = {
   rank: number;        // Current rank on the simplified leaderboard
   totalPlayers: number; 
   isNewBest: boolean;  // Did they beat their previous score?
+  dateBucket: number;
 };
