@@ -70,7 +70,7 @@ type StoredState = {
   updatedAt: number;
 };
 
-function getUtcDayInteger(offsetDays: number, date: Date = new Date()): string {
+function getUtcDayInteger(offsetDays: number = 0, date: Date = new Date()): string {
   if (offsetDays > 0) {
     date.setUTCDate(date.getUTCDate() + offsetDays);
   }
@@ -85,9 +85,13 @@ function getUtcDayInteger(offsetDays: number, date: Date = new Date()): string {
 function stateKey(postId: string, username: string) {
   return `state:${postId}:${username}`;
 }
+
 function leaderboardKey(postId: string) {
-  const scoreDate = getUtcDayInteger(0);
-  return `lb:${postId}:${scoreDate}`;
+    return `lb:${postId}`;
+}
+
+function dailyLeaderboardKey(postId: string, date: string) {
+  return `lb:${postId}:${date}`;
 }
 
 async function getUsername(): Promise<string> {
@@ -172,34 +176,53 @@ router.post("/api/score", async (req, res) => {
 
     const sanitized = Math.max(0, Math.min(score, 1_000_000_000));
     const lbKey = leaderboardKey(postId);
+    const dateBucket = getUtcDayInteger();
+    const dailyKey = dailyLeaderboardKey(postId, dateBucket);
 
-    // 1. Get old score to compare
-    const existing = await redis.zScore(lbKey, username);
-    const existingScore = existing !== undefined && existing !== null ? Number(existing) : -1;
+    // 1. Get old scores to compare (Global and Daily)
+    const [existingGlobal, existingDaily] = await Promise.all([
+      redis.zScore(lbKey, username),
+      redis.zScore(dailyKey, username)
+    ]);
     
-    // 2. Determine best score
-    const best = Math.max(existingScore, sanitized);
-    const isNewBest = sanitized > existingScore;
+    const globalScore = existingGlobal !== undefined && existingGlobal !== null ? Number(existingGlobal) : -1;
+    const dailyScore = existingDaily !== undefined && existingDaily !== null ? Number(existingDaily) : -1;
+    
+    // 2. Determine best scores
+    const bestGlobal = Math.max(globalScore, sanitized);
+    const bestDaily = Math.max(dailyScore, sanitized);
+    
+    const isNewBestGlobal = sanitized > globalScore;
 
-    // 3. Update Leaderboard
-    await redis.zAdd(lbKey, { score: best, member: username });
+    // 3. Update Leaderboards
+    await Promise.all([
+      redis.zAdd(lbKey, { score: bestGlobal, member: username }),
+      redis.zAdd(dailyKey, { score: bestDaily, member: username })
+    ]);
 
     // 4. Update User State (optional, keeps your persistence logic)
     const sKey = stateKey(postId, username);
     const prevRaw = await redis.get(sKey);
-    const prev = (prevRaw ? JSON.parse(prevRaw) : {}) as any;
-    const next = {
+    const prev = (prevRaw ? JSON.parse(prevRaw) : {}) as StoredState;
+
+    const next: StoredState = {
       username,
       updatedAt: Date.now(),
-      ...prev,
-      bestScore: best,
-      dateBucket: getUtcDayInteger(), // Store the date bucket of the latest score for potential future use
+      bestScore: bestGlobal,
+      data: {
+        ...(prev.data || {}),
+        date: dateBucket,
+      },
     };
     await redis.set(sKey, JSON.stringify(next));
 
     // 5. Calculate Rank immediately
-    // zRank is 0-based ascending (0 is lowest score). 
-    // We want 1-based descending (1 is highest score).
+    // If we're tracking daily stuff, which rank do we return? 
+    // Usually the one relevant to the "Best" notification, which is Global often.
+    // But let's return Daily Rank if the user is focused on Daily?
+    // The previous code returned one rank. Let's return Global Rank to be consistent with "rank" 
+    // and maybe "dailyRank" if needed, but let's stick to Global for the primary response unless asked.
+    
     const ascRank = await redis.zRank(lbKey, username);
     const totalPlayers = await redis.zCard(lbKey);
     
@@ -210,24 +233,16 @@ router.post("/api/score", async (req, res) => {
     }
     const scoreData = { 
       success: true,
-      score: best, 
+      score: bestGlobal, 
       rank, 
       totalPlayers,
-      isNewBest,
+      isNewBest: isNewBestGlobal,
       updatedAt: next.updatedAt,
-      dateBucket: getUtcDayInteger(0), 
+      dateBucket: dateBucket,
     };
     console.log("POST /api/score scoreData:", JSON.stringify(scoreData));
     // 6. Return everything GameMaker needs in one go
-    res.json({ 
-      success: true,
-      score: best, 
-      rank, 
-      totalPlayers,
-      isNewBest,
-      updatedAt: next.updatedAt,
-      dateBucket: getUtcDayInteger(0),
-    });
+    res.json(scoreData);
 
   } catch (err) {
     console.error("POST /api/score error:", err);
@@ -235,7 +250,7 @@ router.post("/api/score", async (req, res) => {
   }
 });
 
-// GET /api/leaderboard?limit=10 -> top N + caller's rank
+// GET /api/leaderboard?limit=10&date=YYYYMMDD -> top N + caller's rank
 router.get("/api/leaderboard", async (req, res) => {
   try {
     const { postId } = context;
@@ -247,20 +262,34 @@ router.get("/api/leaderboard", async (req, res) => {
     const limitParam = Number(req.query.limit ?? 10);
     const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 100)) : 10;
 
-    const lbKey = leaderboardKey(postId);
+    const dateParam = req.query.date as string | undefined;
+    
+    // Logic: If date param is provided, query daily leaderboard.
+    // If NO date param is provided, user asked to default to "Today".
+    // Therefore, we ALWAYS default to a daily view unless explicitly "all" (not implemented yet).
+    const effectiveDate = dateParam ?? getUtcDayInteger();
+    const lbKey = dailyLeaderboardKey(postId, effectiveDate);
 
-    // zRange can return with scores when asked; our SDK does ascending by default
-    // so to emulate "top N", either use rev:true (if available) or flip ranks manually
+    // Fetch top entries from the specific daily zset
     const entries = await redis.zRange(lbKey, 0, limit - 1);
 
-    const top = entries.map((e, i) => ({
-      rank: i + 1,
-      username: e.member,
-      score: Number(e.score ?? 0),
-      dateBucket: getUtcDayInteger(0),
-    }));
+    // Hydrate with date from State (fetched via separate key)
+    const enrichedPromises = entries.map(async (e, i) => {
+      const u = e.member;
+      // Note: State might store the "Global Best" date, not necessarily "This Daily Score" date.
+      // But for a daily leaderboard, the date is implicit (effectiveDate).
+      // We can fetch state if we want other metadata, or just return what we have.
+      return {
+        rank: i + 1,
+        username: u,
+        score: Number(e.score ?? 0),
+        date: effectiveDate,
+      };
+    });
 
-    // find caller's rank: only ascending zRank is guaranteed
+    const top = await Promise.all(enrichedPromises);
+
+    // find caller's rank in this specific daily leaderboard
     const ascRank = await redis.zRank(lbKey, username);
     const total = Number((await redis.zCard(lbKey)) ?? 0);
     const meRank0 =
@@ -268,31 +297,26 @@ router.get("/api/leaderboard", async (req, res) => {
         ? total - 1 - Number(ascRank) // flip ascending to descending
         : ascRank;
 
-    const me =
-      meRank0 !== undefined && meRank0 !== null
-        ? {
-          rank: Number(meRank0) + 1,
-          username,
-          score: Number((await redis.zScore(lbKey, username)) ?? 0),
-          dateBucket: getUtcDayInteger(0),
-        }
-        : null;
+    let me = null;
+    if (meRank0 !== undefined && meRank0 !== null) {
+      me = {
+        rank: Number(meRank0) + 1,
+        username,
+        score: Number((await redis.zScore(lbKey, username)) ?? 0),
+        date: effectiveDate,
+      };
+    }
 
     const dataOut = {
       top,
       me,
       totalPlayers: total,
       generatedAt: Date.now(),
-      dateBucket: getUtcDayInteger(0),
+      filterDate: effectiveDate
     };
     console.log("GET /api/leaderboard dataOut:", JSON.stringify(dataOut));
 
-    res.json({
-      top,
-      me,
-      totalPlayers: total,
-      generatedAt: Date.now(),
-    });
+    res.json(dataOut);
   } catch (err) {
     console.error("GET /api/leaderboard error:", err);
     res.status(500).json({ error: "Failed to fetch leaderboard" });
